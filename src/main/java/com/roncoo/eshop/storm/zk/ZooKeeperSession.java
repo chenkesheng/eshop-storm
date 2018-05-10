@@ -158,7 +158,6 @@ public class ZooKeeperSession {
 
     /**
      * 获取单例
-     *
      */
     public static ZooKeeperSession getInstance() {
         return Singleton.getInstance();

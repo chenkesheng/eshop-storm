@@ -117,7 +117,7 @@
 
     <build>
         <sourceDirectory>src/main/java</sourceDirectory>
-        <testSourceDirectory>src/test/java</testSourceDirectory>
+        <testSourceDirectory>src/main/test/java</testSourceDirectory>
 
         <plugins>
             <plugin>

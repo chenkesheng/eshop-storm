@@ -12,6 +12,7 @@ import kafka.consumer.ConsumerIterator;
 import kafka.consumer.KafkaStream;
 import kafka.javaapi.consumer.ConsumerConnector;
 
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.storm.spout.SpoutOutputCollector;
 import org.apache.storm.task.TopologyContext;
 import org.apache.storm.topology.OutputFieldsDeclarer;
@@ -50,6 +51,9 @@ public class AccessLogKafkaSpout extends BaseRichSpout {
         props.put("zookeeper.session.timeout.ms", "40000");
         props.put("zookeeper.sync.time.ms", "200");
         props.put("auto.commit.interval.ms", "1000");
+
+//        KafkaConsumer<String, String> consumer = new KafkaConsumer<String, String>(props);
+
         ConsumerConfig consumerConfig = new ConsumerConfig(props);
 
         ConsumerConnector consumerConnector = Consumer.

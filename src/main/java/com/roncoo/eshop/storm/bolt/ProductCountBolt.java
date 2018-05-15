@@ -1,10 +1,12 @@
 package com.roncoo.eshop.storm.bolt;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
 import com.roncoo.eshop.storm.http.HttpClientUtils;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.storm.shade.org.json.simple.JSONArray;
 import org.apache.storm.task.OutputCollector;
 import org.apache.storm.task.TopologyContext;
@@ -75,6 +77,7 @@ public class ProductCountBolt extends BaseRichBolt {
         public void run() {
             List<Map.Entry<Long, Long>> productCountList = new ArrayList<Map.Entry<Long, Long>>();
             List<Long> hotProductIdList = new ArrayList<Long>();
+            List<Long> lastTimeHotProductIdList = new ArrayList<Long>();
 
             while (true) {
                 // 1、将LRUMap中的数据按照访问次数，进行全局的排序
@@ -157,6 +160,29 @@ public class ProductCountBolt extends BaseRichBolt {
 
                             for (String appNginxURL : appNginxURLs) {
                                 HttpClientUtils.sendGetRequest(appNginxURL);
+                            }
+                        }
+                    }
+
+                    //实时感知热点数据的消失
+                    if (CollectionUtils.isEmpty(lastTimeHotProductIdList)) {
+                        if (CollectionUtils.isNotEmpty(hotProductIdList)) {
+                            for (Long productId : hotProductIdList) {
+                                lastTimeHotProductIdList.add(productId);
+                            }
+                        }
+                    } else {
+                        for (Long productId : lastTimeHotProductIdList) {
+                            if (!hotProductIdList.contains(productId)) {
+                                //说明上次的那个商品id的热点，消失了
+                                String url = "http://192.168.30.103/cancel_hot?productId=" + productId;
+                                HttpClientUtils.sendGetRequest(url);
+                            }
+                        }
+                        if (CollectionUtils.isNotEmpty(hotProductIdList)) {
+                            lastTimeHotProductIdList.clear();
+                            for (Long productId : hotProductIdList) {
+                                lastTimeHotProductIdList.add(productId);
                             }
                         }
                     }

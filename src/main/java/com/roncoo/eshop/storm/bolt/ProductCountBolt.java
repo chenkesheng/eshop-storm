@@ -1,12 +1,13 @@
 package com.roncoo.eshop.storm.bolt;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-
+import com.google.common.collect.Lists;
 import com.roncoo.eshop.storm.http.HttpClientUtils;
+import com.roncoo.eshop.storm.zk.ZooKeeperSession;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.http.protocol.HTTP;
+import org.apache.storm.shade.org.apache.http.NameValuePair;
+import org.apache.storm.shade.org.apache.http.client.utils.URLEncodedUtils;
+import org.apache.storm.shade.org.apache.http.message.BasicNameValuePair;
 import org.apache.storm.shade.org.json.simple.JSONArray;
 import org.apache.storm.task.OutputCollector;
 import org.apache.storm.task.TopologyContext;
@@ -18,7 +19,9 @@ import org.apache.storm.utils.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.roncoo.eshop.storm.zk.ZooKeeperSession;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 商品访问次数统计bolt
@@ -26,7 +29,6 @@ import com.roncoo.eshop.storm.zk.ZooKeeperSession;
  * @author Administrator
  */
 public class ProductCountBolt extends BaseRichBolt {
-
     private static final long serialVersionUID = -8761807561458126413L;
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ProductCountBolt.class);
@@ -43,15 +45,15 @@ public class ProductCountBolt extends BaseRichBolt {
         new Thread(new ProductCountThread()).start();
         new Thread(new HotProductFindThread()).start();
 
-        // 1、将自己的taskId写入一个zookeeper node中，形成taskId的列表
-        // 2、然后每次都将自己的热门商品列表，写入自己的taskId对应的zookeeper节点
-        // 3、然后这样的话，并行的预热程序才能从第一步中知道，有哪些taskId
-        // 4、然后并行预热程序根据每个taskId去获取一个锁，然后再从对应的zNode中拿到热门商品列表
+        // 1、将自己的taskid写入一个zookeeper node中，形成taskid的列表
+        // 2、然后每次都将自己的热门商品列表，写入自己的taskid对应的zookeeper节点
+        // 3、然后这样的话，并行的预热程序才能从第一步中知道，有哪些taskid
+        // 4、然后并行预热程序根据每个taskid去获取一个锁，然后再从对应的znode中拿到热门商品列表
         initTaskId(context.getThisTaskId());
     }
 
     private void initTaskId(int taskid) {
-        // ProductCountBolt所有的task启动的时候， 都会将自己的taskId写到同一个node的值中
+        // ProductCountBolt所有的task启动的时候， 都会将自己的taskid写到同一个node的值中
         // 格式就是逗号分隔，拼接成一个列表
         // 111,211,355
 
@@ -74,10 +76,11 @@ public class ProductCountBolt extends BaseRichBolt {
 
     private class HotProductFindThread implements Runnable {
 
+        @SuppressWarnings("deprecation")
         public void run() {
             List<Map.Entry<Long, Long>> productCountList = new ArrayList<Map.Entry<Long, Long>>();
-            List<Long> hotProductIdList = new ArrayList<Long>();
-            List<Long> lastTimeHotProductIdList = new ArrayList<Long>();
+            List<Long> hotProductIdList = Lists.newArrayList();
+            List<Long> lastTimeHotProductIdList = Lists.newArrayList();
 
             while (true) {
                 // 1、将LRUMap中的数据按照访问次数，进行全局的排序
@@ -150,28 +153,35 @@ public class ProductCountBolt extends BaseRichBolt {
                         if (productCountEntry.getValue() > 10 * avgCount) {
                             LOGGER.info("【HotProductFindThread发现一个热点】productCountEntry=" + productCountEntry);
                             hotProductIdList.add(productCountEntry.getKey());
-                            // 将缓存热点反向推送到流量分发的nginx中 -> 流量分发的Nginx
-                            String distributeNginxURL = "http://192.168.30.103/hot?productId=" + productCountEntry.getKey();
-                            HttpClientUtils.sendGetRequest(distributeNginxURL);
 
-                            // 将缓存热点，那个商品对应的完整的缓存数据，发送请求到缓存服务去获取，反向推送到所有的后端应用nginx服务器上去
-                            String cacheServiceURL = "http://192.168.15.40:8080/getProductInfo?productId=" + productCountEntry.getKey();
-                            String response = HttpClientUtils.sendGetRequest(cacheServiceURL);
+                            if (!lastTimeHotProductIdList.contains(productCountEntry.getKey())) {
+                                // 将缓存热点反向推送到流量分发的nginx中
+                                String distributeNginxURL = "http://192.168.31.227/hot?productId=" + productCountEntry.getKey();
+                                HttpClientUtils.sendGetRequest(distributeNginxURL);
 
-                            String[] appNginxURLs = new String[]{
-                                    "http://192.168.30.102/hot?productId=" + productCountEntry.getKey() + "&productInfo=" + response,
-                                    "http://192.168.30.100/hot?productId=" + productCountEntry.getKey() + "&productInfo=" + response
-                            };
+                                // 将缓存热点，那个商品对应的完整的缓存数据，发送请求到缓存服务去获取，反向推送到所有的后端应用nginx服务器上去
+                                String cacheServiceURL = "http://192.168.31.179:8080/getProductInfo?productId=" + productCountEntry.getKey();
+                                String response = HttpClientUtils.sendGetRequest(cacheServiceURL);
 
-                            for (String appNginxURL : appNginxURLs) {
-                                HttpClientUtils.sendGetRequest(appNginxURL);
+                                List<NameValuePair> params = Lists.newArrayList();
+                                params.add(new BasicNameValuePair("productInfo", response));
+                                String productInfo = URLEncodedUtils.format(params, HTTP.UTF_8);
+
+                                String[] appNginxURLs = new String[]{
+                                        "http://192.168.31.187/hot?productId=" + productCountEntry.getKey() + "&" + productInfo,
+                                        "http://192.168.31.19/hot?productId=" + productCountEntry.getKey() + "&" + productInfo
+                                };
+
+                                for (String appNginxURL : appNginxURLs) {
+                                    HttpClientUtils.sendGetRequest(appNginxURL);
+                                }
                             }
                         }
                     }
 
-                    //实时感知热点数据的消失
-                    if (CollectionUtils.isEmpty(lastTimeHotProductIdList)) {
-                        if (CollectionUtils.isNotEmpty(hotProductIdList)) {
+                    // 4、实时感知热点数据的消失
+                    if (lastTimeHotProductIdList.size() == 0) {
+                        if (hotProductIdList.size() > 0) {
                             for (Long productId : hotProductIdList) {
                                 lastTimeHotProductIdList.add(productId);
                             }
@@ -181,18 +191,21 @@ public class ProductCountBolt extends BaseRichBolt {
                         for (Long productId : lastTimeHotProductIdList) {
                             if (!hotProductIdList.contains(productId)) {
                                 LOGGER.info("【HotProductFindThread发现一个热点消失了】productId=" + productId);
-                                //说明上次的那个商品id的热点，消失了
+                                // 说明上次的那个商品id的热点，消失了
                                 // 发送一个http请求给到流量分发的nginx中，取消热点缓存的标识
-                                String url = "http://192.168.30.103/cancel_hot?productId=" + productId;
+                                String url = "http://192.168.31.227/cancel_hot?productId=" + productId;
                                 HttpClientUtils.sendGetRequest(url);
                             }
                         }
-                        if (CollectionUtils.isNotEmpty(hotProductIdList)) {
+
+                        if (hotProductIdList.size() > 0) {
                             lastTimeHotProductIdList.clear();
                             for (Long productId : hotProductIdList) {
                                 lastTimeHotProductIdList.add(productId);
                             }
                             LOGGER.info("【HotProductFindThread保存上次热点数据】lastTimeHotProductIdList=" + lastTimeHotProductIdList);
+                        } else {
+                            lastTimeHotProductIdList.clear();
                         }
                     }
 
@@ -297,5 +310,4 @@ public class ProductCountBolt extends BaseRichBolt {
     public void declareOutputFields(OutputFieldsDeclarer declarer) {
 
     }
-
 }

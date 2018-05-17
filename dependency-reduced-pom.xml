@@ -7,7 +7,7 @@
   <version>1.0-SNAPSHOT</version>
   <build>
     <sourceDirectory>src/main/java</sourceDirectory>
-    <testSourceDirectory>src/test/java</testSourceDirectory>
+    <testSourceDirectory>src/main/test/java</testSourceDirectory>
     <plugins>
       <plugin>
         <artifactId>maven-shade-plugin</artifactId>
